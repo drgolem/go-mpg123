@@ -178,6 +178,9 @@ func (d *Decoder) Close() error {
 
 // Read decodes data and into buf and returns number of bytes decoded.
 func (d *Decoder) Read(buf []byte) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
+	}
 	var done C.size_t
 	err := C.do_mpg123_read(d.handle, (unsafe.Pointer)(&buf[0]), C.size_t(len(buf)), &done)
 	if err == C.MPG123_DONE {
@@ -190,10 +193,22 @@ func (d *Decoder) Read(buf []byte) (int, error) {
 }
 
 func (d *Decoder) ReadAudioFrames(frames int, buf []byte) (int, error) {
+	if len(buf) == 0 {
+		return 0, fmt.Errorf("empty buffer provided")
+	}
+	if frames <= 0 {
+		return 0, fmt.Errorf("invalid frames: %d", frames)
+	}
+
 	var done C.size_t
 	_, channels, bitsPerSample := d.GetFormat()
 	bytesPerSample := bitsPerSample / 8
 	framesToBytes := bytesPerSample * frames * channels
+
+	if framesToBytes > len(buf) {
+		return 0, fmt.Errorf("buffer too small: need %d bytes, have %d", framesToBytes, len(buf))
+	}
+
 	err := C.do_mpg123_read(d.handle, (unsafe.Pointer)(&buf[0]), C.size_t(framesToBytes), &done)
 	if err == C.MPG123_DONE {
 		return int(done), EOF
@@ -206,10 +221,26 @@ func (d *Decoder) ReadAudioFrames(frames int, buf []byte) (int, error) {
 
 func (d *Decoder) DecodeSamples(samples int, audio []byte) (int, error) {
 	rLen, err := d.ReadAudioFrames(samples, audio)
-	if err == EOF {
-		return 0, nil
+
+	// Get actual format to calculate bytes per frame
+	_, channels, bitsPerSample := d.GetFormat()
+	bytesPerSample := bitsPerSample / 8
+	bytesPerFrame := bytesPerSample * channels
+
+	if bytesPerFrame == 0 {
+		return 0, fmt.Errorf("invalid audio format detected")
 	}
-	return (rLen / 4), nil
+
+	if err != nil {
+		if err == EOF {
+			// Return partial samples read before EOF
+			return rLen / bytesPerFrame, EOF
+		}
+		// Propagate other errors
+		return 0, err
+	}
+
+	return rLen / bytesPerFrame, nil
 }
 
 // Feed provides data bytes into the decoder
@@ -231,6 +262,9 @@ func (d *Decoder) Seek(offset int64, whence int) (int64, error) {
 	c_offset := (C.off_t)(offset)
 	c_whence := (C.int)(whence)
 	s_offset := (int64)(C.mpg123_seek(d.handle, c_offset, c_whence))
+	if s_offset < 0 {
+		return 0, fmt.Errorf("seek failed: %s", d.strerror())
+	}
 	return s_offset, nil
 }
 

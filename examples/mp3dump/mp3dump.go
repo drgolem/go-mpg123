@@ -52,11 +52,10 @@ func main() {
 	// decode mp3 file and dump output
 	buf := make([]byte, 2048*16)
 	for {
-		len, err := decoder.Read(buf)
-		o.Write(buf[0:len])
+		n, err := decoder.Read(buf)
+		o.Write(buf[0:n])
 		if err != nil {
 			break
 		}
 	}
-	o.Close()
 }
